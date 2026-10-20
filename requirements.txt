@@ -1,7 +1,7 @@
 streamlit
 openpyxl
 Pillow
-google-generativeai
+google-genai
 pandas
 xlsxwriter
 streamlit-paste-button
