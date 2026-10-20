@@ -1,6 +1,6 @@
 import streamlit as st
-from google import genai
-import io, json
+import requests
+import io, json, base64
 from openpyxl import load_workbook
 from PIL import Image as PILImage
 import pandas as pd
@@ -9,25 +9,27 @@ import xlsxwriter
 st.set_page_config(page_title="Préparation de commande", layout="centered")
 st.title("Préparation de commande")
 
-# --- Clé API Gemini ---
-api_key = st.secrets.get("GEMINI_API_KEY", "")
-if not api_key:
-    api_key = st.sidebar.text_input("Clé API Gemini (Google)", type="password")
+# --- Clés API Cloudflare ---
+account_id = st.secrets.get("CF_ACCOUNT_ID", "")
+api_token = st.secrets.get("CF_API_TOKEN", "")
+if not account_id or not api_token:
+    st.sidebar.warning("Clés Cloudflare manquantes dans les Secrets.")
 
 # --- Uploads ---
 st.subheader("1. Fichiers")
 template = st.file_uploader("Tableau Excel vierge (.xlsx)", type=["xlsx"])
-
-# On utilise l'uploader classique pour la photo de commande
 order_photo = st.file_uploader("Photo de la commande (capture d'écran)", type=["jpg", "jpeg", "png"])
 
 st.subheader("2. Lien")
 link = st.text_input("Lien Alibaba")
 
-def extract_data_from_photo(image_bytes, api_key):
-    client = genai.Client(api_key=api_key)
+def extract_data_from_photo(image_bytes, account_id, api_token):
+    # Conversion de l'image en base64
     img = PILImage.open(io.BytesIO(image_bytes))
-    
+    buffered = io.BytesIO()
+    img.save(buffered, format="PNG")
+    img_b64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+
     prompt = """
     Analyse cette image de commande. Extrait l'adresse de livraison globale, le nom du client, le nom du produit, et la LISTE des variantes (couleurs) avec leurs quantités.
     Renvoie UNIQUEMENT un JSON avec cette structure exacte :
@@ -51,12 +53,31 @@ def extract_data_from_photo(image_bytes, api_key):
       ]
     }
     """
-    response = client.models.generate_content(
-        gemini-3.1-flash-lite,
-        contents=[prompt, img]
-    )
-    text = response.text.strip().replace("```json", "").replace("```", "").strip()
-    return json.loads(text)
+
+    # Appel direct à l'API Cloudflare Workers AI
+    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/@cf/meta/llama-3.2-11b-vision-instruct"
+    headers = {"Authorization": f"Bearer {api_token}"}
+    payload = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}}
+                ]
+            }
+        ]
+    }
+    
+    response = requests.post(url, headers=headers, json=payload)
+    response.raise_for_status() # Lève une erreur si l'API échoue
+    result = response.json()
+    
+    # On récupère la réponse texte de l'IA
+    text_response = result["result"]["response"]
+    # Nettoyage pour ne garder que le JSON
+    text_response = text_response.strip().replace("```json", "").replace("```", "").strip()
+    return json.loads(text_response)
 
 if st.button("Générer le fichier", type="primary"):
     if not template or not link or not order_photo:
@@ -67,7 +88,7 @@ if st.button("Générer le fichier", type="primary"):
 
     with st.spinner("L'IA analyse la commande..."):
         try:
-            data = extract_data_from_photo(order_img_bytes, api_key)
+            data = extract_data_from_photo(order_img_bytes, account_id, api_token)
             shipping = data.get("shipping", {})
             product_name = data.get("product_name", "")
             variants = data.get("variants", [])
@@ -100,11 +121,10 @@ if st.button("Générer le fichier", type="primary"):
                 for col, val in values.items():
                     if val not in ("", None): ws.cell(row=current_row, column=col, value=val)
 
-        # Sauvegarde temporaire
         temp_out = io.BytesIO()
         wb.save(temp_out)
         
-        # Découpe de la vignette pour l'image
+        # Découpe de la vignette (on garde l'astuce)
         full_img = PILImage.open(io.BytesIO(order_img_bytes))
         width, height = full_img.size
         crop_box = (0, 0, int(width * 0.15), int(height * 0.15)) 
@@ -113,15 +133,12 @@ if st.button("Générer le fichier", type="primary"):
         img_path = "temp_prod_img.png"
         product_thumb.save(img_path, format="PNG")
 
-        # Finalisation
         final_out = io.BytesIO()
         with pd.ExcelWriter(final_out, engine='xlsxwriter') as writer:
             df = pd.read_excel(io.BytesIO(temp_out.getvalue()), header=None)
             df.to_excel(writer, index=False, header=False)
             worksheet = writer.sheets['Sheet1']
-            
             worksheet.insert_image(1, 15, img_path, {'x_scale': 0.8, 'y_scale': 0.8})
-            
             for row_idx in range(1, 1 + len(variants)):
                 worksheet.set_row(row_idx, 60)
 
