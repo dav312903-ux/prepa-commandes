@@ -1,5 +1,5 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai
 import io, json
 from openpyxl import load_workbook
 from PIL import Image as PILImage
@@ -26,8 +26,8 @@ st.subheader("2. Lien")
 link = st.text_input("Lien Alibaba")
 
 def extract_data_from_photo(image_bytes, api_key):
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    # Nouvelle syntaxe avec google-genai
+    client = genai.Client(api_key=api_key)
     img = PILImage.open(io.BytesIO(image_bytes))
     
     prompt = """
@@ -53,7 +53,10 @@ def extract_data_from_photo(image_bytes, api_key):
       ]
     }
     """
-    response = model.generate_content([prompt, img])
+    response = client.models.generate_content(
+        model='gemini-1.5-flash',
+        contents=[prompt, img]
+    )
     text = response.text.strip().replace("```json", "").replace("```", "").strip()
     return json.loads(text)
 
@@ -106,15 +109,11 @@ if st.button("Générer le fichier", type="primary"):
         temp_out = io.BytesIO()
         wb.save(temp_out)
         
-        # --- L'ASTUCE POUR L'IMAGE ---
-        # On découpe la photo du produit (en haut à gauche de la capture)
+        # L'astuce pour l'image (découpe de la vignette)
         full_img = PILImage.open(io.BytesIO(order_img_bytes))
         width, height = full_img.size
-        # On prend environ 15% de la largeur et 15% de la hauteur en haut à gauche
         crop_box = (0, 0, int(width * 0.15), int(height * 0.15)) 
         product_thumb = full_img.crop(crop_box)
-        
-        # On la redimensionne pour qu'elle rentre dans la cellule
         product_thumb.thumbnail((100, 70))
         img_path = "temp_prod_img.png"
         product_thumb.save(img_path, format="PNG")
@@ -126,7 +125,6 @@ if st.button("Générer le fichier", type="primary"):
             df.to_excel(writer, index=False, header=False)
             worksheet = writer.sheets['Sheet1']
             
-            # On insère la vignette sur la première ligne (P2)
             worksheet.insert_image(1, 15, img_path, {'x_scale': 0.8, 'y_scale': 0.8})
             
             for row_idx in range(1, 1 + len(variants)):
