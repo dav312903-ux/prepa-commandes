@@ -7,6 +7,7 @@ from openpyxl.utils.cell import coordinate_to_tuple
 from PIL import Image as PILImage
 import pandas as pd
 import xlsxwriter
+from streamlit_paste_button import paste_image_button as pbutton
 
 st.set_page_config(page_title="Préparation de commande", layout="centered")
 st.title("Préparation de commande")
@@ -19,8 +20,13 @@ if not api_key:
 # --- Uploads ---
 st.subheader("1. Fichiers")
 template = st.file_uploader("Tableau Excel vierge (.xlsx)", type=["xlsx"])
-order_photo = st.file_uploader("Photo de la commande", type=["jpg", "jpeg", "png"])
-product_photo = st.file_uploader("Photo du produit", type=["jpg", "jpeg", "png"])
+
+# Boutons de collage pour les images
+st.write("**Photo de la commande** (faites une capture d'écran, puis cliquez sur le bouton)")
+order_photo_result = pbutton("📋 Coller la photo de la commande", key="order_paste")
+
+st.write("**Photo du produit** (faites une capture d'écran, puis cliquez sur le bouton)")
+product_photo_result = pbutton("📋 Coller la photo du produit", key="product_paste")
 
 st.subheader("2. Informations")
 link = st.text_input("Lien Alibaba")
@@ -51,14 +57,28 @@ def extract_data_from_photo(image_bytes, api_key):
     return json.loads(text)
 
 if st.button("Générer le fichier", type="primary"):
-    if not all([template, order_photo, product_photo, link, client_name]):
-        st.error("Veuillez remplir tous les champs et uploader les 3 fichiers.")
+    # Vérification des entrées
+    if not all([template, link, client_name]):
+        st.error("Veuillez remplir le tableau, le lien et le nom du client.")
+        st.stop()
+    
+    if order_photo_result.image_data is None or product_photo_result.image_data is None:
+        st.error("Veuillez coller les deux photos (commande et produit) avec les boutons.")
         st.stop()
 
-    with st.spinner("L'IA lit la commande..."):
-        data = extract_data_from_photo(order_photo.getvalue(), api_key)
+    # Conversion des images PIL en bytes pour la suite du traitement
+    order_img_bytes = io.BytesIO()
+    order_photo_result.image_data.save(order_img_bytes, format="PNG")
+    order_img_bytes = order_img_bytes.getvalue()
 
-    with st.spinner("Remplissage du tableau (mise en forme préservée)..."):
+    product_img_bytes = io.BytesIO()
+    product_photo_result.image_data.save(product_img_bytes, format="PNG")
+    product_img_bytes = product_img_bytes.getvalue()
+
+    with st.spinner("L'IA lit la commande..."):
+        data = extract_data_from_photo(order_img_bytes, api_key)
+
+    with st.spinner("Remplissage du tableau..."):
         # 1. On charge le VRAI modèle pour garder les couleurs
         wb = load_workbook(io.BytesIO(template.getvalue()))
         ws = wb.active
@@ -75,9 +95,8 @@ if st.button("Générer le fichier", type="primary"):
         for col, val in values.items():
             if val not in ("", None): ws.cell(row=row, column=col, value=val)
 
-        # 3. L'ASTUCE POUR L'IMAGE : On utilise XlsxWriter pour forcer l'affichage
-        # sans perdre les couleurs d'openpyxl
-        img = PILImage.open(io.BytesIO(product_photo.getvalue())).convert("RGB")
+        # 3. L'astuce pour l'image : on utilise XlsxWriter pour forcer l'affichage
+        img = PILImage.open(io.BytesIO(product_img_bytes)).convert("RGB")
         img.thumbnail((100, 70)) 
         img_path = "temp_prod_img.png"
         img.save(img_path, format="PNG")
