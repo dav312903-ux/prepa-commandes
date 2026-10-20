@@ -2,8 +2,6 @@ import streamlit as st
 import google.generativeai as genai
 import io, json
 from openpyxl import load_workbook
-from openpyxl.drawing.image import Image as XLImage
-from openpyxl.utils.cell import coordinate_to_tuple
 from PIL import Image as PILImage
 import pandas as pd
 import xlsxwriter
@@ -23,9 +21,6 @@ template = st.file_uploader("Tableau Excel vierge (.xlsx)", type=["xlsx"])
 
 st.write("**Photo de la commande** (capture d'écran complète)")
 order_photo_result = pbutton("📋 Coller la photo de la commande", key="order_paste", errors="ignore")
-
-st.write("**Photo du produit** (optionnel : si vous l'avez, collez-la. Sinon, laissez vide)")
-product_photo_result = pbutton("📋 Coller la photo du produit", key="product_paste", errors="ignore")
 
 st.subheader("2. Lien")
 link = st.text_input("Lien Alibaba")
@@ -111,16 +106,18 @@ if st.button("Générer le fichier", type="primary"):
         temp_out = io.BytesIO()
         wb.save(temp_out)
         
-        # Préparation de l'image du produit (UNIQUEMENT si elle a été fournie)
-        img_path = None
-        if product_photo_result.image_data is not None:
-            product_img_bytes = io.BytesIO()
-            product_photo_result.image_data.save(product_img_bytes, format="PNG")
-            product_img_bytes = product_img_bytes.getvalue()
-            img = PILImage.open(io.BytesIO(product_img_bytes)).convert("RGB")
-            img.thumbnail((100, 70)) 
-            img_path = "temp_prod_img.png"
-            img.save(img_path, format="PNG")
+        # --- L'ASTUCE POUR L'IMAGE ---
+        # On découpe la photo du produit (en haut à gauche de la capture)
+        full_img = PILImage.open(io.BytesIO(order_img_bytes))
+        width, height = full_img.size
+        # On prend environ 15% de la largeur et 15% de la hauteur en haut à gauche
+        crop_box = (0, 0, int(width * 0.15), int(height * 0.15)) 
+        product_thumb = full_img.crop(crop_box)
+        
+        # On la redimensionne pour qu'elle rentre dans la cellule
+        product_thumb.thumbnail((100, 70))
+        img_path = "temp_prod_img.png"
+        product_thumb.save(img_path, format="PNG")
 
         # Finalisation
         final_out = io.BytesIO()
@@ -129,9 +126,8 @@ if st.button("Générer le fichier", type="primary"):
             df.to_excel(writer, index=False, header=False)
             worksheet = writer.sheets['Sheet1']
             
-            # On insère l'image seulement si elle existe
-            if img_path:
-                worksheet.insert_image(1, 15, img_path, {'x_scale': 0.8, 'y_scale': 0.8})
+            # On insère la vignette sur la première ligne (P2)
+            worksheet.insert_image(1, 15, img_path, {'x_scale': 0.8, 'y_scale': 0.8})
             
             for row_idx in range(1, 1 + len(variants)):
                 worksheet.set_row(row_idx, 60)
