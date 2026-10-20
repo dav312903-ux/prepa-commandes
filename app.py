@@ -5,7 +5,6 @@ from openpyxl import load_workbook
 from PIL import Image as PILImage
 import pandas as pd
 import xlsxwriter
-from streamlit_paste_button import paste_image_button as pbutton
 
 st.set_page_config(page_title="Préparation de commande", layout="centered")
 st.title("Préparation de commande")
@@ -19,14 +18,13 @@ if not api_key:
 st.subheader("1. Fichiers")
 template = st.file_uploader("Tableau Excel vierge (.xlsx)", type=["xlsx"])
 
-st.write("**Photo de la commande** (capture d'écran complète)")
-order_photo_result = pbutton("📋 Coller la photo de la commande", key="order_paste", errors="ignore")
+# On utilise l'uploader classique pour la photo de commande
+order_photo = st.file_uploader("Photo de la commande (capture d'écran)", type=["jpg", "jpeg", "png"])
 
 st.subheader("2. Lien")
 link = st.text_input("Lien Alibaba")
 
 def extract_data_from_photo(image_bytes, api_key):
-    # Nouvelle syntaxe avec google-genai
     client = genai.Client(api_key=api_key)
     img = PILImage.open(io.BytesIO(image_bytes))
     
@@ -61,25 +59,22 @@ def extract_data_from_photo(image_bytes, api_key):
     return json.loads(text)
 
 if st.button("Générer le fichier", type="primary"):
-    if not template or not link:
-        st.error("Veuillez fournir le tableau Excel et le lien Alibaba.")
-        st.stop()
-    
-    if order_photo_result.image_data is None:
-        st.error("Veuillez coller la photo de la commande.")
+    if not template or not link or not order_photo:
+        st.error("Veuillez fournir le tableau Excel, la photo et le lien Alibaba.")
         st.stop()
 
-    # Conversion de l'image de commande
-    order_img_bytes = io.BytesIO()
-    order_photo_result.image_data.save(order_img_bytes, format="PNG")
-    order_img_bytes = order_img_bytes.getvalue()
+    order_img_bytes = order_photo.getvalue()
 
     with st.spinner("L'IA analyse la commande..."):
-        data = extract_data_from_photo(order_img_bytes, api_key)
-        shipping = data.get("shipping", {})
-        product_name = data.get("product_name", "")
-        variants = data.get("variants", [])
-        client_name = data.get("client_name", "Client")
+        try:
+            data = extract_data_from_photo(order_img_bytes, api_key)
+            shipping = data.get("shipping", {})
+            product_name = data.get("product_name", "")
+            variants = data.get("variants", [])
+            client_name = data.get("client_name", "Client")
+        except Exception as e:
+            st.error(f"Erreur lors de l'analyse par l'IA : {e}")
+            st.stop()
 
         if not variants:
             st.error("Aucune variante ou quantité détectée sur la photo.")
@@ -109,7 +104,7 @@ if st.button("Générer le fichier", type="primary"):
         temp_out = io.BytesIO()
         wb.save(temp_out)
         
-        # L'astuce pour l'image (découpe de la vignette)
+        # Découpe de la vignette pour l'image
         full_img = PILImage.open(io.BytesIO(order_img_bytes))
         width, height = full_img.size
         crop_box = (0, 0, int(width * 0.15), int(height * 0.15)) 
