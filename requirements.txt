@@ -4,4 +4,3 @@ Pillow
 google-genai
 pandas
 xlsxwriter
-streamlit-paste-button
