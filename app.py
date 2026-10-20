@@ -52,7 +52,7 @@ def extract_data_from_photo(image_bytes, api_key):
     }
     """
     response = client.models.generate_content(
-        model='gemini-3.8-flash',
+        gemini-3.1-flash-lite,
         contents=[prompt, img]
     )
     text = response.text.strip().replace("```json", "").replace("```", "").strip()
