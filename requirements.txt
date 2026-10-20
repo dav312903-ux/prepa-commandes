@@ -1,6 +1,6 @@
 streamlit
 openpyxl
 Pillow
-google-genai
+requests
 pandas
 xlsxwriter
